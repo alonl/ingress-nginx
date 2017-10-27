@@ -1,5 +1,5 @@
 ## Modified from [origin](https://github.com/kubernetes/ingress-nginx):
-- (none) 
+- Added Lua back (actually reverted [this commit](https://github.com/kubernetes/ingress-nginx/commit/95b04ff9eb5b105ad21e7bbfd89d0a83574c76e2#diff-c1fe8869a51a706788a14475a7c342c1))
 
 ---
 

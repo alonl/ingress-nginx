@@ -23,7 +23,11 @@ export NGINX_VERSION=1.13.6
 export NDK_VERSION=0.3.0
 export VTS_VERSION=0.1.15
 export SETMISC_VERSION=0.31
+export LUA_VERSION=0.10.10
 export STICKY_SESSIONS_VERSION=08a395c66e42
+export LUA_CJSON_VERSION=2.1.0.5
+export LUA_RESTY_HTTP_VERSION=0.11
+export LUA_UPSTREAM_VERSION=0.07
 export MORE_HEADERS_VERSION=0.33
 export NGINX_DIGEST_AUTH=519dc2a4907bc6d9c48f95b3cf6a0151aaf44b40
 export NGINX_SUBSTITUTIONS=bc58cb11844bc42735bbaef7085ea86ace46d05b
@@ -49,7 +53,9 @@ get_src()
 }
 
 if [[ ${ARCH} == "ppc64le" ]]; then
-  clean-install software-properties-common
+  clean-install software-properties-common && \
+    add-apt-repository -y ppa:ibmpackages/luajit
+  apt-get update && apt-get install --no-install-recommends -y lua5.1 lua5.1-dev
 fi
 
 # install required packages to build
@@ -67,7 +73,10 @@ clean-install \
   zlib1g-dev \
   libaio1 \
   libaio-dev \
+  luajit \
   openssl \
+  libluajit-5.1 \
+  libluajit-5.1-dev \
   libperl-dev \
   cmake \
   util-linux \
@@ -102,8 +111,20 @@ get_src 97946a68937b50ab8637e1a90a13198fe376d801dc3e7447052e43c28e9ee7de \
 get_src 5112a054b1b1edb4c0042a9a840ef45f22abb3c05c68174e28ebf483164fb7e1 \
         "https://github.com/vozlt/nginx-module-vts/archive/v$VTS_VERSION.tar.gz"
 
+get_src b4acb84e2d631035a516d61830c910ef6e6485aba86096221ec745e0dbb3fbc9 \
+        "https://github.com/openresty/lua-nginx-module/archive/v$LUA_VERSION.tar.gz"
+
+get_src ad4a74397d9f7076c7a90ac095e8f7968031debad637a7825ff1410b74c5eec5 \
+        "https://github.com/openresty/lua-cjson/archive/$LUA_CJSON_VERSION.tar.gz"
+
+get_src b8cb6c2cc8d36a24fc9c640bcd616fbc86c03c993d64473046cae7f3af96d2a3 \
+        "https://github.com/pintsized/lua-resty-http/archive/v$LUA_RESTY_HTTP_VERSION.tar.gz"
+
 get_src a3dcbab117a9c103bc1ea5200fc00a7b7d2af97ff7fd525f16f8ac2632e30fbf \
         "https://github.com/openresty/headers-more-nginx-module/archive/v$MORE_HEADERS_VERSION.tar.gz"
+
+get_src 2a69815e4ae01aa8b170941a8e1a10b6f6a9aab699dee485d58f021dd933829a \
+        "https://github.com/openresty/lua-upstream-nginx-module/archive/v$LUA_UPSTREAM_VERSION.tar.gz"
 
 get_src 53e440737ed1aff1f09fae150219a45f16add0c8d6e84546cb7d80f73ebffd90 \
         "https://bitbucket.org/nginx-goodies/nginx-sticky-module-ng/get/$STICKY_SESSIONS_VERSION.tar.gz"
@@ -149,7 +170,7 @@ cd "$BUILD_PATH"
 
 if [[ ${ARCH} != "s390x" ]]; then
  # Get Brotli source and deps
- git clone --depth=1 https://github.com/google/ngx_brotli.git 
+ git clone --depth=1 https://github.com/google/ngx_brotli.git
  cd ngx_brotli && git submodule update --init
 fi
 
@@ -207,10 +228,12 @@ fi
 WITH_MODULES="--add-module=$BUILD_PATH/ngx_devel_kit-$NDK_VERSION \
   --add-module=$BUILD_PATH/set-misc-nginx-module-$SETMISC_VERSION \
   --add-module=$BUILD_PATH/nginx-module-vts-$VTS_VERSION \
+  --add-module=$BUILD_PATH/lua-nginx-module-$LUA_VERSION \
   --add-module=$BUILD_PATH/headers-more-nginx-module-$MORE_HEADERS_VERSION \
   --add-module=$BUILD_PATH/nginx-goodies-nginx-sticky-module-ng-$STICKY_SESSIONS_VERSION \
   --add-module=$BUILD_PATH/nginx-http-auth-digest-$NGINX_DIGEST_AUTH \
   --add-module=$BUILD_PATH/ngx_http_substitutions_filter_module-$NGINX_SUBSTITUTIONS \
+  --add-module=$BUILD_PATH/lua-upstream-nginx-module-$LUA_UPSTREAM_VERSION \
   --add-dynamic-module=$BUILD_PATH/nginx-opentracing-$NGINX_OPENTRACING_VERSION/opentracing \
   --add-dynamic-module=$BUILD_PATH/nginx-opentracing-$NGINX_OPENTRACING_VERSION/zipkin"
 
@@ -247,6 +270,23 @@ fi
   && make || exit 1 \
   && make install || exit 1
 
+echo "Installing CJSON module"
+cd "$BUILD_PATH/lua-cjson-$LUA_CJSON_VERSION"
+
+if [[ ${ARCH} == "ppc64le" ]];then
+  LUA_DIR=/usr/include/luajit-2.1
+else
+  LUA_DIR=/usr/include/luajit-2.0
+fi
+make LUA_INCLUDE_DIR=${LUA_DIR} && make install
+
+echo "Installing lua-resty-http module"
+# copy lua module
+cd "$BUILD_PATH/lua-resty-http-$LUA_RESTY_HTTP_VERSION"
+sed -i 's/resty.http_headers/http_headers/' $BUILD_PATH/lua-resty-http-$LUA_RESTY_HTTP_VERSION/lib/resty/http.lua
+cp $BUILD_PATH/lua-resty-http-$LUA_RESTY_HTTP_VERSION/lib/resty/http.lua /usr/local/lib/lua/5.1
+cp $BUILD_PATH/lua-resty-http-$LUA_RESTY_HTTP_VERSION/lib/resty/http_headers.lua /usr/local/lib/lua/5.1
+
 echo "Cleaning..."
 
 cd /
@@ -258,11 +298,17 @@ apt-mark unmarkauto \
   libpcre3 \
   zlib1g \
   libaio1 \
+  luajit \
+  libluajit-5.1-2 \
   xz-utils \
   geoip-bin \
   libyajl2 liblmdb0 libxml2 libpcre++ \
   gzip \
   openssl
+
+if [[ ${ARCH} == "ppc64le" ]]; then
+  apt-mark unmarkauto liblua5.1-0
+fi
 
 apt-get remove -y --purge \
   build-essential \
@@ -273,6 +319,7 @@ apt-get remove -y --purge \
   libssl-dev \
   zlib1g-dev \
   libaio-dev \
+  libluajit-5.1-dev \
   linux-libc-dev \
   cmake \
   wget \
